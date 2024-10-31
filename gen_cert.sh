@@ -13,7 +13,7 @@ rm *.pem
 rm *.cnf
 
 echo "Generate CA's private key"
-openssl req -x509 -newkey rsa:4096 -days ${DAYS} -nodes -keyout ca-key.pem -out ca-cert.pem -subj "/CN=Certificate authority/" 2>/dev/null
+openssl req -x509 -newkey rsa:4096 -days ${CA_DAYS} -nodes -keyout ca-key.pem -out ca-cert.pem -subj "/CN=Certificate authority/" 2>/dev/null
 
 echo "CA's self-signed certificate"
 openssl x509 -in ca-cert.pem -noout # -text
