@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+option go_package = "/grpc";
+
+package grpc;
+
+service Node {
+  rpc Status(EmptyRequest) returns (NodeStatusResponse) {}
+  rpc Vote(VoteRequest) returns (VoteResponse) {}
+  rpc HeartBeat(HeartBeatRequest) returns (EmptyResponse) {}
+}
+
+message EmptyRequest {}
+message EmptyResponse {}
+
+message StatusRequest {
+  string nodeID = 1;
+}
+
+message NodeStatusResponse {
+  NodeStatus status = 1;
+  int64 round = 2;
+}
+
+enum NodeStatus {
+  Follower = 0;
+	Candidate = 1;
+	Leader = 2;
+}
+
+message VoteRequest {
+  string nodeID = 1;
+  int64 round = 2;
+}
+
+message VoteResponse {
+  bool vote = 1;
+  int64 round = 2;
+}
+
+message HeartBeatRequest {
+  string nodeID = 1;
+  int64 round = 2;
+}
