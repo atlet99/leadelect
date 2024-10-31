@@ -79,7 +79,7 @@ func New(id, addr string, port int, opts ...NodeOpt) (n *Node) {
 }
 
 func (n *Node) ClientTLS(caFile, serverHostOverride string) (err error) {
-	caFile = asbPath(caFile)
+	caFile = absPath(caFile)
 	var creds credentials.TransportCredentials
 	if creds, err = credentials.NewClientTLSFromFile(caFile, serverHostOverride); err != nil {
 		return
@@ -90,7 +90,7 @@ func (n *Node) ClientTLS(caFile, serverHostOverride string) (err error) {
 
 func (n *Node) ServerTLS(certFile, keyFile string) (err error) {
 	var creds credentials.TransportCredentials
-	creds, err = credentials.NewServerTLSFromFile(asbPath(certFile), asbPath(keyFile))
+	creds, err = credentials.NewServerTLSFromFile(absPath(certFile), absPath(keyFile))
 	if err != nil {
 		return
 	}
