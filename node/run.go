@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	pb "github.com/NovikovRoman/leadelect/grpc"
+	pb "github.com/atlet99/leadelect/grpc"
 )
 
 // handleError processes errors and logs critical cases

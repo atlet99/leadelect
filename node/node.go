@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	pb "github.com/NovikovRoman/leadelect/grpc"
+	pb "github.com/atlet99/leadelect/grpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
