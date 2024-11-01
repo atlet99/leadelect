@@ -8,9 +8,11 @@
 
 ## Пример для запуска на локальной машине
 
-- [cfg.yaml](#cfgyaml)
-- [main.go](#maingo)
-- [Сборка и запуск](#сборка-и-запуск)
+- [LEADer ELECTion](#leader-election)
+  - [Пример для запуска на локальной машине](#пример-для-запуска-на-локальной-машине)
+    - [cfg.yaml](#cfgyaml)
+    - [main.go](#maingo)
+    - [Сборка и запуск](#сборка-и-запуск)
 
 ### cfg.yaml
 
@@ -48,7 +50,7 @@ import (
     "syscall"
     "time"
 
-    "github.com/NovikovRoman/leadelect/node"
+    "github.com/atlet99/leadelect/node"
     "gopkg.in/yaml.v3"
 )
 
@@ -67,21 +69,36 @@ type config struct {
 }
 
 func main() {
+    // Load configuration
     b, err := os.ReadFile("cfg.yaml")
     if err != nil {
-        slog.Error(err.Error())
+        slog.Error("failed to read configuration file", "error", err)
         os.Exit(1)
     }
 
     var cfg config
     if err = yaml.Unmarshal(b, &cfg); err != nil {
-        slog.Error(err.Error())
+        slog.Error("failed to parse configuration file", "error", err)
         os.Exit(1)
     }
 
-    p, ok := cfg.Nodes[os.Args[1]]
+    // Ensure node ID is provided as an argument
+    if len(os.Args) < 2 {
+        slog.Error("node ID argument missing")
+        os.Exit(1)
+    }
+
+    // Initialize the current node
+    nodeID := os.Args[1]
+    p, ok := cfg.Nodes[nodeID]
     if !ok {
-        slog.Error("node not found")
+        slog.Error("node not found in configuration", "nodeID", nodeID)
+        os.Exit(1)
+    }
+
+    port, err := strconv.Atoi(p.Port)
+    if err != nil {
+        slog.Error("invalid port number", "nodeID", nodeID, "port", p.Port, "error", err)
         os.Exit(1)
     }
 
@@ -91,55 +108,57 @@ func main() {
         node.CheckElectionTimeout(time.Second * 10),
     }
 
-    port, _ := strconv.ParseInt(p.Port, 10, 64)
-    n := node.New(os.Args[1], p.Addr, int(port), opts...)
+    n := node.New(nodeID, p.Addr, port, opts...)
 
+    // Setup TLS if specified in configuration
     if cfg.Certs.Ca != "" {
         if err = n.ClientTLS(cfg.Certs.Ca, p.Addr); err != nil {
-            slog.Error(err.Error())
+            slog.Error("failed to set up client TLS", "error", err)
             os.Exit(1)
         }
     }
     if cfg.Certs.Server.Cert != "" {
         if err = n.ServerTLS(cfg.Certs.Server.Cert, cfg.Certs.Server.Key); err != nil {
-            slog.Error(err.Error())
+            slog.Error("failed to set up server TLS", "error", err)
             os.Exit(1)
         }
     }
 
+    // Add other nodes
     for id, v := range cfg.Nodes {
-        if id == os.Args[1] {
+        if id == nodeID {
             continue
         }
-        port, _ := strconv.ParseInt(v.Port, 10, 64)
-        n.AddNode(node.New(id, v.Addr, int(port)))
+        otherPort, err := strconv.Atoi(v.Port)
+        if err != nil {
+            slog.Warn("invalid port for node, skipping", "nodeID", id, "port", v.Port, "error", err)
+            continue
+        }
+        n.AddNode(node.New(id, v.Addr, otherPort))
     }
 
+    // Start the node
     ctx, cancel := context.WithCancel(context.Background())
     go n.Run(ctx, slog.Default())
 
+    // Periodically log the status of the node
+    ticker := time.NewTicker(10 * time.Second)
+    defer ticker.Stop()
     go func() {
-        for {
-            time.Sleep(time.Second * 10)
-            fmt.Println("Node status", n.Status())
+        for range ticker.C {
+            slog.Info("Node status", "nodeID", nodeID, "status", n.Status())
         }
     }()
 
-    shutdown := make(chan bool)
-    defer close(shutdown)
+    // Handle graceful shutdown
     interrupt := make(chan os.Signal, 1)
-    defer close(interrupt)
     signal.Notify(interrupt, os.Interrupt, syscall.SIGTERM)
-    go func() {
-        <-interrupt
-        cancel()
-        log.Println("Shutting down...")
-        time.Sleep(time.Second * 3)
-        shutdown <- true
-    }()
 
-    <-shutdown
-    log.Println("Completed")
+    <-interrupt
+    slog.Info("Shutting down node", "nodeID", nodeID)
+    cancel()
+    time.Sleep(3 * time.Second) // Wait for graceful shutdown
+    slog.Info("Shutdown complete", "nodeID", nodeID)
 }
 ```
 
