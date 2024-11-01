@@ -1,3 +1,5 @@
+github.com/NovikovRoman/leadelect v0.0.0-20241031105111-ffc42f05da35 h1:q2cy3vSQR6G5Snt/7+dWWl6ujFQZL2r7gnLvgRo7EKw=
+github.com/NovikovRoman/leadelect v0.0.0-20241031105111-ffc42f05da35/go.mod h1:yejNA5K/5yyxms0Q6LwfQcCjjWLVqWBXtGZ0cDhUcOk=
 github.com/google/go-cmp v0.6.0 h1:ofyhxvXcZhMsU5ulbFiLKl/XBFqE1GSq7atu8tAmTRI=
 github.com/google/go-cmp v0.6.0/go.mod h1:17dUlkBOakJ0+DkrSSNjCkIjxS6bF9zb3elmeNGIjoY=
 golang.org/x/net v0.30.0 h1:AcW1SDZMkb8IpzCdQUaIq2sP4sZ4zw+55h6ynffypl4=
