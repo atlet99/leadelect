@@ -3,3 +3,5 @@
 bin/
 certs/
 TODO.md
+main.go
+cfg.yaml
