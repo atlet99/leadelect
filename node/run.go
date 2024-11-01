@@ -3,7 +3,7 @@ package node
 import (
 	"context"
 	"log/slog"
-	"math/rand/v2"
+	"math/rand"
 	"net"
 	"sync"
 	"time"
@@ -11,10 +11,17 @@ import (
 	pb "github.com/NovikovRoman/leadelect/grpc"
 )
 
+// handleError processes errors and logs critical cases
+func handleError(logger *slog.Logger, err error, msg string) {
+	if err != nil {
+		logger.Error(msg, "error", err.Error())
+	}
+}
+
 func (n *Node) Run(ctx context.Context, logger *slog.Logger) {
 	go n.serverRun(ctx, logger)
 
-	// And who is the leader here?
+	// Initialization and leader identification
 	n.initialization(ctx, logger)
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
@@ -28,11 +35,12 @@ func (n *Node) Run(ctx context.Context, logger *slog.Logger) {
 		default:
 		}
 
+		// Leader status check
 		if n.isLeader() && t.After(nextHeartBeat) {
 			n.setHeartBeat()
 			nextHeartBeat = time.Now().Add(n.heartBeatTimeout)
 			if err := n.heartBeat(ctx); err != nil {
-				logger.Error("Run heartBeat", "err", err.Error())
+				handleError(logger, err, "Run heartBeat failed")
 			}
 
 		} else if n.getLeader() != nil && n.heartBeatExpired() {
@@ -48,7 +56,6 @@ func (n *Node) Run(ctx context.Context, logger *slog.Logger) {
 		if n.getLeader() == nil {
 			n.election(ctx, logger)
 			time.Sleep(time.Second)
-
 		} else {
 			nextCheck = time.Now().Add(n.checkElectionTimeout)
 		}
@@ -56,9 +63,20 @@ func (n *Node) Run(ctx context.Context, logger *slog.Logger) {
 }
 
 func (n *Node) serverRun(ctx context.Context, logger *slog.Logger) {
-	lis, err := net.Listen("tcp", n.AddrPort())
+	var lis net.Listener
+	var err error
+
+	// Retry logic for server startup
+	for i := 0; i < 3; i++ {
+		lis, err = net.Listen("tcp", n.AddrPort())
+		if err == nil {
+			break
+		}
+		logger.Error("serverRun net.Listen retrying...", "attempt", i+1, "error", err.Error())
+		time.Sleep(2 * time.Second)
+	}
 	if err != nil {
-		logger.Error("serverRun net.Listen", "id", n.ID(), "addr", n.AddrPort(), "err", err.Error())
+		handleError(logger, err, "serverRun failed to bind to address")
 		return
 	}
 
@@ -75,7 +93,7 @@ func (n *Node) serverRun(ctx context.Context, logger *slog.Logger) {
 
 	logger.Info("serverRun", "id", n.ID(), "addr", n.AddrPort())
 	if err := n.grpcServer.Serve(lis); err != nil {
-		logger.Error("serverRun Serve", "id", n.ID(), "addr", n.AddrPort(), "err", err.Error())
+		logger.Error("serverRun Serve failed", "id", n.ID(), "addr", n.AddrPort(), "err", err.Error())
 	}
 	wg.Wait()
 }
@@ -95,12 +113,12 @@ func (n *Node) initialization(ctx context.Context, logger *slog.Logger) {
 			logger.Info("initialization", "nodeID", node.id)
 
 			wg.Add(1)
-			go func(wg *sync.WaitGroup, ch chan *data) {
+			go func(wg *sync.WaitGroup, ch chan *data, node *Node) {
 				defer wg.Done()
 
 				resp, err := n.grpcClient.status(ctx, node.AddrPort())
 				if err != nil {
-					logger.Info("initialization status", "nodeID", node.id, "err", err.Error())
+					logger.Info("initialization status failed", "nodeID", node.id, "err", err.Error())
 					ch <- nil
 					return
 				}
@@ -110,7 +128,7 @@ func (n *Node) initialization(ctx context.Context, logger *slog.Logger) {
 					nodeID: node.ID(),
 					resp:   resp,
 				}
-			}(wg, ch)
+			}(wg, ch, node)
 		}
 		wg.Wait()
 	}()
@@ -121,7 +139,6 @@ func (n *Node) initialization(ctx context.Context, logger *slog.Logger) {
 		select {
 		case <-ctx.Done():
 			return
-
 		case d := <-ch:
 			if d == nil {
 				continue
@@ -132,7 +149,6 @@ func (n *Node) initialization(ctx context.Context, logger *slog.Logger) {
 				n.newLeader(d.nodeID)
 				n.setHeartBeat()
 				n.setRound(d.resp.Round)
-
 			} else if d.resp.Round > maxRound {
 				maxRound = d.resp.Round
 			}
@@ -151,22 +167,18 @@ func (n *Node) election(ctx context.Context, logger *slog.Logger) {
 		return
 	}
 
-	time.Sleep(time.Millisecond * time.Duration(rand.Int32N(150)+150))
+	time.Sleep(time.Millisecond * time.Duration(rand.Intn(150)+150))
 
 	n.addRound()
 	n.setVoted()
 	n.addVote()
 	n.setStatus(pb.NodeStatus_Candidate)
 
-	ch := make(chan string)
-	defer close(ch)
-
 	wg := &sync.WaitGroup{}
-
 	maxRound := int64(0)
 	for _, node := range n.Nodes() {
 		wg.Add(1)
-		go func(wg *sync.WaitGroup) {
+		go func(node *Node) {
 			defer wg.Done()
 
 			if n.isFollower() {
@@ -175,7 +187,7 @@ func (n *Node) election(ctx context.Context, logger *slog.Logger) {
 
 			resp, err := n.grpcClient.vote(ctx, node.AddrPort())
 			if err != nil {
-				logger.Error("election vote", "nodeID", node.id, "err", err.Error())
+				logger.Error("election vote failed", "nodeID", node.id, "err", err.Error())
 				return
 			}
 
@@ -186,18 +198,17 @@ func (n *Node) election(ctx context.Context, logger *slog.Logger) {
 			if resp.Vote {
 				n.addVote()
 			}
-		}(wg)
+		}(node)
 	}
 	wg.Wait()
 
-	logger.Info("election", "votes", n.numVotes())
+	logger.Info("election result", "votes", n.numVotes())
 	if n.numVotes() > n.NumNodes()/2 {
 		n.newLeader(n.id)
 		if err := n.heartBeat(ctx); err != nil {
-			logger.Error("election heartBeat", "err", err.Error())
+			logger.Error("election heartBeat failed", "err", err.Error())
 		}
 		return
-
 	} else if maxRound > n.getRound() {
 		n.setRound(maxRound)
 	}

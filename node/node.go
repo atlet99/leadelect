@@ -2,7 +2,6 @@ package node
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -20,11 +19,11 @@ type Node struct {
 	port   int
 	status pb.NodeStatus
 
-	round int64 // Раунд голосования
-	votes int   // Голоса от нод
-	voted bool  // Проголосовал
+	round int64 // Voting round
+	votes int   // Votes from nodes
+	voted bool  // Has voted
 
-	nodes map[string]*Node // другие ноды
+	nodes map[string]*Node // Other nodes
 
 	heartBeatTime time.Time
 
@@ -56,8 +55,8 @@ func CheckElectionTimeout(timeout time.Duration) NodeOpt {
 	}
 }
 
-func New(id, addr string, port int, opts ...NodeOpt) (n *Node) {
-	n = &Node{
+func New(id, addr string, port int, opts ...NodeOpt) *Node {
+	n := &Node{
 		id:                   id,
 		addr:                 addr,
 		port:                 port,
@@ -75,220 +74,44 @@ func New(id, addr string, port int, opts ...NodeOpt) (n *Node) {
 	n.grpcClient = newClient(n, []grpc.DialOption{
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	})
-	return
+	return n
 }
 
-func (n *Node) ClientTLS(caFile, serverHostOverride string) (err error) {
+func (n *Node) ClientTLS(caFile, serverHostOverride string) error {
 	caFile = absPath(caFile)
-	var creds credentials.TransportCredentials
-	if creds, err = credentials.NewClientTLSFromFile(caFile, serverHostOverride); err != nil {
-		return
+	creds, err := credentials.NewClientTLSFromFile(caFile, serverHostOverride)
+	if err != nil {
+		return fmt.Errorf("failed to load client TLS credentials: %w", err)
 	}
 	n.grpcClient = newClient(n, []grpc.DialOption{grpc.WithTransportCredentials(creds)})
-	return
+	return nil
 }
 
-func (n *Node) ServerTLS(certFile, keyFile string) (err error) {
-	var creds credentials.TransportCredentials
-	creds, err = credentials.NewServerTLSFromFile(absPath(certFile), absPath(keyFile))
+func (n *Node) ServerTLS(certFile, keyFile string) error {
+	creds, err := credentials.NewServerTLSFromFile(absPath(certFile), absPath(keyFile))
 	if err != nil {
-		return
+		return fmt.Errorf("failed to load server TLS credentials: %w", err)
 	}
 	n.grpcServer = grpc.NewServer(grpc.Creds(creds))
-	return
-}
-
-func (n *Node) ID() string {
-	return n.id
-}
-
-func (n *Node) Addr() string {
-	return n.addr
-}
-
-func (n *Node) Port() int {
-	return n.port
-}
-
-func (n *Node) AddrPort() string {
-	return fmt.Sprintf("%s:%d", n.addr, n.port)
-}
-
-func (n *Node) AddNode(node *Node) {
-	n.Lock()
-	n.nodes[node.id] = node
-	n.Unlock()
-}
-
-func (n *Node) Nodes() map[string]*Node {
-	n.RLock()
-	defer n.RUnlock()
-	return n.nodes
-}
-
-func (n *Node) NumNodes() int {
-	n.RLock()
-	defer n.RUnlock()
-	return len(n.nodes)
-}
-
-func (n *Node) Status() pb.NodeStatus {
-	n.RLock()
-	defer n.RUnlock()
-	return n.status
-}
-
-func (n *Node) addVote() {
-	n.Lock()
-	n.votes += 1
-	n.Unlock()
-}
-
-func (n *Node) numVotes() int {
-	n.RLock()
-	defer n.RUnlock()
-	return n.votes
-}
-
-func (n *Node) resetVotes() {
-	n.Lock()
-	n.votes = 0
-	n.Unlock()
-}
-
-func (n *Node) isVoted() bool {
-	n.RLock()
-	defer n.RUnlock()
-	return n.voted
-}
-
-func (n *Node) setVoted() {
-	n.Lock()
-	n.voted = true
-	n.Unlock()
-}
-
-func (n *Node) resetVoted() {
-	n.Lock()
-	n.voted = false
-	n.Unlock()
-}
-
-func (n *Node) getRound() int64 {
-	n.RLock()
-	defer n.RUnlock()
-	return n.round
-}
-
-func (n *Node) setRound(round int64) {
-	n.Lock()
-	n.round = round
-	n.Unlock()
-}
-
-func (n *Node) addRound() {
-	n.Lock()
-	n.round += 1
-	n.Unlock()
-}
-
-func (n *Node) agreeVote(round int64) bool {
-	n.Lock()
-	defer n.Unlock()
-
-	if n.status != pb.NodeStatus_Follower && n.round >= round || n.voted {
-		return false
-	}
-
-	n.voted = true
-	n.votes = 0
-	n.status = pb.NodeStatus_Follower // снять свою кандидатуру
-	return true
-}
-
-func (n *Node) heartBeatExpired() bool {
-	n.RLock()
-	defer n.RUnlock()
-	return time.Since(n.heartBeatTime) > time.Second*5
-}
-
-func (n *Node) setHeartBeat() {
-	n.Lock()
-	n.heartBeatTime = time.Now()
-	n.Unlock()
-}
-
-func (n *Node) setStatus(status pb.NodeStatus) {
-	n.Lock()
-	n.status = status
-	n.Unlock()
-}
-
-func (n *Node) getStatus() pb.NodeStatus {
-	n.RLock()
-	defer n.RUnlock()
-	return n.status
-}
-
-func (n *Node) isLeader() bool {
-	return n.getStatus() == pb.NodeStatus_Leader
-}
-
-func (n *Node) isFollower() bool {
-	return n.getStatus() == pb.NodeStatus_Follower
-}
-
-func (n *Node) newLeader(nodeID string) {
-	n.Lock()
-	defer n.Unlock()
-
-	n.voted = false
-	n.votes = 0
-
-	if n.id == nodeID {
-		n.status = pb.NodeStatus_Leader
-	} else {
-		n.status = pb.NodeStatus_Follower
-	}
-
-	for id, node := range n.nodes {
-		if id == nodeID {
-			node.status = pb.NodeStatus_Leader
-		} else {
-			node.status = pb.NodeStatus_Follower
-		}
-	}
-}
-
-func (n *Node) getLeader() *Node {
-	n.RLock()
-	defer n.RUnlock()
-
-	if n.status == pb.NodeStatus_Leader {
-		return n
-	}
-
-	for _, node := range n.nodes {
-		if node.status == pb.NodeStatus_Leader {
-			return node
-		}
-	}
 	return nil
 }
 
 func (n *Node) heartBeat(ctx context.Context) error {
 	n.setHeartBeat()
 
+	var mu sync.Mutex // Mutex for concurrent error access
 	var err error
 	wg := &sync.WaitGroup{}
 	for _, node := range n.Nodes() {
 		wg.Add(1)
-		go func(wg *sync.WaitGroup) {
+		go func(node *Node) {
 			defer wg.Done()
 			if e := n.grpcClient.heartBeat(ctx, node.AddrPort()); e != nil {
-				err = errors.Join(err, fmt.Errorf("node %s: %w", node.ID(), e))
+				mu.Lock()
+				err = fmt.Errorf("node %s: %w", node.ID(), e)
+				mu.Unlock()
 			}
-		}(wg)
+		}(node)
 	}
 	wg.Wait()
 
